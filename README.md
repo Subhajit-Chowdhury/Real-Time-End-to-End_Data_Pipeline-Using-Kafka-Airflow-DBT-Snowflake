@@ -1,22 +1,69 @@
-# Banking CDC and Analytics Pipeline
+# Real-Time End-to-End Data Pipeline Using Kafka, Airflow, dbt, and Snowflake
 
-A learning project for following synthetic banking data from a PostgreSQL
-transactional database through change data capture (CDC), object storage,
-orchestration, and Snowflake/dbt analytics.
+This repository is a **synthetic-data portfolio prototype** for a banking
+analytics pipeline. It contains PostgreSQL, Debezium, Kafka, a Python
+consumer, MinIO, Airflow, Snowflake, and dbt components.
 
-> **Project status:** prototype. The repository contains the main components,
-> but a complete run requires local configuration and Snowflake setup. Known
-> integration gaps are listed below; this is not a production-ready banking
-> system.
+> **Accuracy note:** The repository describes a realistic pipeline pattern,
+> but it is not a replica of a bank's production system. The components have
+> not been verified as a working end-to-end pipeline. The blockers below are
+> part of the current implementation.
 
-## What this project does
+## Project summary (STAR)
 
-1. Generates synthetic customers, accounts, and transactions with Faker.
-2. Uses Debezium to capture PostgreSQL changes and publish them to Kafka.
-3. Consumes Kafka records and writes batches as Parquet files to MinIO.
-4. Uses Airflow to transfer MinIO files to Snowflake.
-5. Uses dbt staging models, snapshots, dimensions, and a transaction fact model
-   to shape warehouse data.
+- **Situation:** Demonstrate how synthetic customer, account, and transaction
+  records could move from an OLTP database toward analytics models.
+- **Task:** Define the source, CDC, object-storage, orchestration, warehouse,
+  and transformation components for that flow.
+- **Action:** The code defines a Faker generator and PostgreSQL schema; a
+  Debezium PostgreSQL connector and Kafka topics; a Python consumer configured
+  to batch records into Parquet files in MinIO; Airflow DAGs for Snowflake
+  loading and dbt runs; and dbt staging models, snapshots, dimensions, and a
+  transaction fact model.
+- **Result:** The repository contains these components and workflow
+  definitions, but a successful end-to-end run is **not established**. The
+  Kafka event format and the Snowflake/dbt input schema do not currently
+  align, as detailed under [Known gaps](#known-gaps).
+
+## Components and technologies
+
+| Component | Technology | What the repository configures |
+| --- | --- | --- |
+| Synthetic source data | Python, Faker | Inserts customers, accounts, and transactions into PostgreSQL |
+| Source database | PostgreSQL 15 | Relational tables; Compose enables logical WAL for CDC |
+| Change capture | Debezium PostgreSQL connector | Connector config selects the three public tables and uses `pgoutput` |
+| Event transport | Apache Kafka, Kafka Connect | Topics receive Debezium change events |
+| Object storage | MinIO | Consumer code writes Parquet batches to an S3-compatible bucket |
+| Orchestration | Apache Airflow | DAG code schedules MinIO loading every minute and dbt work daily |
+| Warehouse | Snowflake | DAG code uses `PUT` and `COPY INTO` to load table stages |
+| Transformations | dbt Core, Snowflake adapter | SQL defines staging views, customer/account snapshots, dimensions, and a fact model |
+| Local infrastructure | Docker Compose | Declares PostgreSQL, Zookeeper, Kafka, Kafka Connect, MinIO, and Airflow services |
+| Workflow automation | GitHub Actions | Defines lint/dbt compile and Snowflake dbt run/test workflows |
+
+Supporting Python packages include `psycopg2-binary`, `kafka-python`,
+`boto3`, `pandas`, `fastparquet`, `python-dotenv`, and `dbt-snowflake`.
+
+## Recruiter and interview points
+
+- **Project scope:** A prototype demonstrating the configuration and code for
+  a CDC-to-warehouse path, not a verified production implementation.
+- **Data modeling:** The dbt project defines staging views, check-strategy
+  snapshots for customers and accounts, two dimensions, and an incremental
+  transaction fact model.
+- **Useful discussion:** Explain the intended data flow, then discuss the
+  event-format and raw-schema mismatches, batch flushing, delete handling,
+  load idempotency, and what you would change before production.
+- **Resume wording:** “Created a synthetic banking-data pipeline prototype
+  with PostgreSQL, Debezium, Kafka, MinIO, Airflow, Snowflake, and dbt; defined
+  CDC, orchestration, snapshot, dimension, and fact-model components.”
+
+Do not claim production use, successful end-to-end execution, performance
+metrics, or business impact unless you have independently tested and measured
+them.
+
+## Intended data flow
+
+The diagram shows the intended design, not a verified successful run:
 
 ```mermaid
 flowchart LR
@@ -97,9 +144,11 @@ directory is mounted into Airflow as `/home/airflow/.dbt`. Configure a
 own Snowflake account. The dbt source declaration currently targets
 `BANKING.RAW`.
 
-## Run locally
+## Attempt a local run
 
-The steps below assume you have prepared the configuration above.
+These setup steps are not evidence of a successful end-to-end run. Prepare the
+configuration above first; see [Known gaps](#known-gaps) before expecting all
+stages to work.
 
 1. Start the supporting services:
 
@@ -150,47 +199,53 @@ The generator, connector-registration script, and consumer are separate
 processes and are not launched by `docker compose up`. The Snowflake objects
 expected by the ingestion DAG must exist before its load step can succeed.
 
-## Data models
+## dbt models
 
-- `stg_customers` and `stg_accounts` extract fields from raw records and rank
-  rows by entity ID and source `created_at`.
-- `stg_transactions` shapes transaction fields.
-- `customers_snapshot` tracks changes to names and email.
-- `accounts_snapshot` tracks changes to customer, account type, and balance.
-- `dim_customers` and `dim_accounts` expose snapshot validity periods.
-- `fact_transactions` joins transactions to accounts and carries the related
-  customer ID.
+- `stg_customers` and `stg_accounts` read fields from a `v` VARIANT column,
+  rank by entity ID and source `created_at`, and keep row number 1.
+- `stg_transactions` reads transaction fields from the same `v` VARIANT shape.
+- `customers_snapshot` checks changes to first name, last name, and email.
+- `accounts_snapshot` checks changes to customer ID, account type, and balance.
+- `dim_customers` and `dim_accounts` select snapshot fields and validity
+  timestamps.
+- `fact_transactions` is configured as incremental and joins transactions to
+  accounts to obtain `customer_id`.
 
-## Current limitations to resolve
+## Known gaps
 
-- The consumer writes Parquet records with top-level fields, while the dbt
-  staging SQL reads fields from a `v` VARIANT column. The Snowflake load step
-  does not currently transform the Parquet rows into that shape. Align the
-  raw-table schema, Snowflake `COPY` operation, and staging models before
-  expecting dbt models to run successfully.
-- The repository does not include Snowflake DDL for the raw tables or a dbt
-  profile. Those must be supplied for a real warehouse run.
-- The consumer writes a file only after a topic reaches its batch size. A
-  partial batch remains in memory until more records arrive; delete events are
-  not handled as row changes.
-- The MinIO transfer DAG scans existing objects repeatedly. Validate load
-  history, retention, and duplicate handling for your Snowflake setup before
-  relying on scheduled runs.
-- The CI workflow refers to a `tests/` directory that is not present in this
-  repository. The CD workflow runs dbt against Snowflake; it does not deploy
-  the Airflow services.
-- The synthetic generator is for demonstrations only. It does not implement
-  banking controls, transaction settlement, or production-grade data
-  validation.
+- **Kafka event shape:** Kafka Connect disables JSON schemas, so Debezium
+  records use a schema-less envelope. The consumer looks for
+  `event["payload"]["after"]`; as configured, this does not match the record
+  shape and prevents normal row extraction.
+- **Snowflake/dbt schema:** The consumer writes Parquet columns at the record
+  root. The dbt staging models expect those fields inside a Snowflake `v`
+  VARIANT column. The DAG's `COPY INTO` does not reshape the rows to that
+  contract. Raw-table DDL and a dbt profile are also absent.
+- **Change coverage:** The generator inserts new rows but does not update
+  existing customers or accounts. The consumer buffers 50 records per topic
+  with no timed partial-batch flush, and it ignores delete events. The sample
+  generator therefore does not exercise snapshot updates by itself.
+- **Airflow behavior:** The MinIO DAG lists objects on each run and does not
+  paginate `list_objects_v2` results. The daily snapshot DAG does not define a
+  dependency between its snapshot and mart tasks, so they may run in parallel.
+  Compose does not configure an explicit Airflow database-migration or
+  user-creation step.
+- **Validation and deployment:** The CI workflow refers to a `tests/`
+  directory that is not present and masks that test-command failure with
+  `|| echo`. The CD workflow runs dbt against Snowflake; it does not deploy
+  Airflow. The dbt source is fixed to `BANKING.RAW`, which must match the
+  warehouse configuration.
+- **Production scope:** Data is synthetic. The repository does not implement
+  banking controls or demonstrate production reliability, security, scale, or
+  data quality.
 
 ## Attribution and license
 
-This is my working version of the pipeline, maintained by **Subhajit
-Chowdhury**. The project direction was inspired by **Jaya Chandra Kadiveti**;
-I appreciate the ideas that helped inform this work. See
-[Jaya's profile](https://www.linkedin.com/in/jayachandrakadiveti/) for the
-inspiration reference. This repository is not an official project or
-endorsement by Jaya.
+This project was inspired by **Jaya Chandra Kadiveti (Data with Jay)**. See
+the [reference video, “End-to-End Banking Data Engineering Project | Snowflake + DBT + Airflow”](https://youtu.be/uHiyZitmIS0?si=hqAe6HblkAVxzHHv)
+and [Jaya's profile](https://www.linkedin.com/in/jayachandrakadiveti/). This
+repository is Subhajit Chowdhury's implementation; it is not an official
+project or endorsement by Jaya.
 
 The repository includes an MIT license. If you reuse any third-party material,
 retain its applicable copyright and license notices as required by its
