@@ -1,151 +1,209 @@
 # Real-Time-End-to-End_Data_Pipeline-Using-Kafka-Airflow-DBT-Snowflake
 
-A banking data engineering project that demonstrates how customer, account and transaction data can be captured from PostgreSQL, processed through Kafka, stored in MinIO and transformed in Snowflake using dbt.
+## End-to-End Banking Data Engineering Pipeline
 
-The project uses Python, Debezium, Apache Kafka, MinIO, Apache Airflow, Snowflake and dbt to implement a CDC-based data pipeline with batch-based file processing.
+An end-to-end data engineering project that demonstrates how banking data can be captured, processed, stored, and transformed using a modern data stack built around **PostgreSQL, Apache Kafka, Debezium, MinIO, Apache Airflow, dbt, and Snowflake**.
+
+The pipeline uses Change Data Capture (CDC) to capture database changes and Kafka to transport event data. It uses MinIO for object storage, Airflow for workflow orchestration, and dbt for transforming raw banking data into analytics-ready models in Snowflake.
 
 ## Project Overview
 
-Banking systems generate continuous changes to customer, account and transaction records. Extracting complete tables repeatedly can increase database load and processing time.
+Banking platforms generate different types of data, including customer information, account details, and financial transactions. Moving this data into an analytical environment requires a structured approach to data ingestion, processing, storage, and transformation.
 
-This project explores an alternative using Change Data Capture (CDC). Debezium captures database changes from PostgreSQL and publishes them to Kafka. A Python consumer processes the events into Parquet batches, which are stored in MinIO before being loaded into Snowflake for analytical transformations.
+This project demonstrates a CDC-based architecture that brings these components together. It uses synthetic banking data to illustrate how data moves from a transactional PostgreSQL database through an event-streaming layer and object storage before reaching a cloud data warehouse.
 
-The source data is generated using Python and Faker to simulate banking transactions.
+The implementation focuses on:
+
+- Capturing database changes using Debezium and PostgreSQL logical replication.
+- Streaming change events through Apache Kafka.
+- Processing events and storing data in Parquet format in MinIO.
+- Orchestrating ingestion and transformation workflows with Apache Airflow.
+- Building analytical data models using dbt and Snowflake.
+- Automating dbt workflows through GitHub Actions.
 
 ## Architecture
 
-```text
-       Python / Faker
-              |
-              ▼
-        PostgreSQL 15
-        (Source Database)
-              |
-              ▼
-         Debezium CDC
-              |
-              ▼
-         Apache Kafka
-         (Change Events)
-              |
-              ▼
-        Python Consumer
-        (Batch Processing)
-              |
-              ▼
-         MinIO (Parquet)
-              |
-              ▼
-        Apache Airflow
-        (Workflow Scheduling)
-              |
-              ▼
-          Snowflake
-        (Data Warehouse)
-              |
-              ▼
-             dbt
-       ├── Staging Models
-       ├── Snapshots
-       ├── Dimensions
-       └── Fact Table
+```mermaid
+flowchart TD
+    A["Python Data Generator<br/>Faker"] --> B["PostgreSQL 15"]
+    B --> C["Debezium CDC Connector"]
+    C --> D["Apache Kafka"]
+    D --> E["Python Kafka Consumer"]
+    E --> F["MinIO<br/>Parquet Files"]
+    F --> G["Apache Airflow"]
+    G --> H["Snowflake<br/>Raw Layer"]
+    H --> I["dbt Transformations"]
+    I --> J["Staging Models"]
+    J --> K["Snapshots"]
+    K --> L["Dimensions and Fact Tables"]
+    M["GitHub Actions"] --> I
 ```
 
-*The diagram represents the intended data flow. The complete integration requires the configuration and compatibility fixes described under Known Limitations.*
+## Technology Stack
 
-## Technologies
+| Component | Technology | Purpose |
+|---|---|---|
+| Programming | Python | Data generation and event processing |
+| Source Database | PostgreSQL 15 | Stores customer, account, and transaction data |
+| CDC | Debezium | Captures database changes |
+| Event Streaming | Apache Kafka | Transports CDC events |
+| Object Storage | MinIO | Stores processed data in Parquet format |
+| Workflow Orchestration | Apache Airflow | Schedules and manages data workflows |
+| Cloud Data Warehouse | Snowflake | Stores analytical data |
+| Data Transformation | dbt | Builds staging, snapshot, dimension, and fact models |
+| Containerization | Docker, Docker Compose | Runs the core infrastructure |
+| CI/CD | GitHub Actions | Automates configured dbt workflows |
+| Synthetic Data | Faker | Generates sample banking records |
 
-| Technology | Role in the Project |
+## Data Pipeline Implementation
+
+### 1. Source Data Generation
+
+Python and the Faker library are used to generate synthetic banking data.
+
+The project works with three primary entities:
+
+- **Customers:** Customer identifiers and personal details.
+- **Accounts:** Account identifiers and associated customer information.
+- **Transactions:** Transaction identifiers, account references, amounts, and transaction details.
+
+The generated records are inserted into PostgreSQL, which acts as the transactional source database.
+
+### 2. Change Data Capture with Debezium
+
+Debezium is configured with the PostgreSQL connector to capture database changes through PostgreSQL logical replication.
+
+The connector uses the `pgoutput` logical decoding plugin to identify changes made to the source tables.
+
+Captured change events are published to Apache Kafka topics, providing a structured way to move database changes into the downstream processing layer.
+
+### 3. Event Processing with Apache Kafka and Python
+
+Apache Kafka acts as the event-streaming layer between PostgreSQL and the downstream storage system.
+
+A Python-based Kafka consumer reads events from the configured topics and prepares the extracted records for storage.
+
+The consumer uses a configurable batch threshold of 50 records per topic and writes the processed data in Parquet format.
+
+This approach separates source database activity from downstream file storage and provides a foundation for scalable event processing.
+
+### 4. Object Storage with MinIO
+
+MinIO provides S3-compatible object storage for the processed data.
+
+The Python consumer writes Parquet files to MinIO, creating an intermediate storage layer between Kafka and the analytical warehouse.
+
+Parquet provides a columnar storage format that is suitable for analytical processing and helps organize data for downstream ingestion.
+
+### 5. Workflow Orchestration with Apache Airflow
+
+Apache Airflow manages the scheduled data workflows.
+
+The project includes DAGs for:
+
+- Loading data files from MinIO into Snowflake.
+- Managing scheduled ingestion activities.
+- Running daily snapshot and data transformation workflows.
+
+The ingestion workflow uses Snowflake `PUT` and `COPY INTO` commands to transfer staged files into warehouse tables.
+
+Airflow provides a centralized way to organize and schedule the pipeline's data processing tasks.
+
+### 6. Data Transformation with dbt and Snowflake
+
+Snowflake serves as the analytical data warehouse, while dbt manages the transformation layer.
+
+The dbt project follows a structured modelling approach.
+
+**Staging Models**
+
+The staging layer includes:
+
+- `stg_customers`
+- `stg_accounts`
+- `stg_transactions`
+
+These models prepare the source data for analytical use by extracting relevant fields, applying data transformations, and handling duplicate records.
+
+**Snapshots**
+
+The project uses dbt snapshots with a check-based strategy to track changes in customer and account records over time.
+
+This supports historical tracking and provides a foundation for Slowly Changing Dimension (SCD) Type 2 modelling.
+
+**Dimension Models**
+
+The project builds:
+
+- `dim_customers`
+- `dim_accounts`
+
+These models provide structured customer and account information for analytical queries.
+
+**Fact Model**
+
+The `fact_transactions` model is designed to represent transaction-level business data.
+
+It uses transaction and account information to associate transactions with their corresponding customers, supporting downstream analytical use cases.
+
+## Data Modelling Approach
+
+The project follows a layered transformation approach:
+
+| Layer | Description |
 |---|---|
-| Python & Faker | Generates synthetic banking records |
-| PostgreSQL 15 | Stores customer, account and transaction data |
-| Debezium | Captures PostgreSQL changes using logical replication |
-| Apache Kafka | Transports database change events |
-| Python Consumer | Reads Kafka events and creates Parquet batches |
-| MinIO | Stores Parquet files using S3-compatible storage |
-| Apache Airflow | Schedules ingestion and dbt workflows |
-| Snowflake | Stores data for analytical processing |
-| dbt Core | Builds staging, snapshot, dimension and fact models |
-| GitHub Actions | Automates configured dbt validation and execution workflows |
-| Docker Compose | Runs the local infrastructure |
+| Source | Banking records generated and stored in PostgreSQL |
+| CDC and Streaming | Database changes captured by Debezium and transported through Kafka |
+| Object Storage | Processed records stored as Parquet files in MinIO |
+| Raw | Source data loaded into Snowflake |
+| Staging | Data extraction, standardization, and deduplication using dbt |
+| Snapshot | Historical tracking of customer and account changes |
+| Dimension | Customer and account analytical models |
+| Fact | Transaction-level analytical model |
 
-## Implementation
+## CI/CD with GitHub Actions
 
-### 1. Source Data and Change Capture
+GitHub Actions is included to automate configured dbt workflows.
 
-- Created PostgreSQL tables for customers, accounts and transactions.
-- Generated synthetic records using Python and Faker.
-- Enabled PostgreSQL logical replication.
-- Configured a Debezium connector using the `pgoutput` plugin.
-- Published database change events to Kafka topics.
+The repository contains workflow definitions for:
 
-### 2. Kafka Processing and Storage
+- dbt project validation and compilation.
+- Pull request-based workflow execution.
+- Running dbt commands against Snowflake.
+- Managing connection credentials through GitHub Secrets.
 
-- Developed a Python consumer to read events from Kafka.
-- Configured batch processing with a threshold of 50 records per topic.
-- Converted extracted records into Parquet files.
-- Stored the files in MinIO for downstream ingestion.
-
-### 3. Data Loading and Orchestration
-
-- Created Airflow DAGs for MinIO-to-Snowflake ingestion and dbt execution.
-- Used Snowflake stages and `COPY INTO` for file loading.
-- Configured scheduled ingestion and daily transformation workflows.
-
-### 4. Data Transformation with dbt
-
-Built staging and analytical models in dbt.
-
-| Model | Description |
-|---|---|
-| `stg_customers` | Extracts and structures customer attributes |
-| `stg_accounts` | Extracts and structures account attributes |
-| `stg_transactions` | Structures transaction records |
-| `customers_snapshot` | Tracks changes to customer attributes |
-| `accounts_snapshot` | Tracks changes to account attributes |
-| `dim_customers` | Builds the customer dimension with historical validity |
-| `dim_accounts` | Builds the account dimension with historical validity |
-| `fact_transactions` | Incrementally models transactions and associated customer information |
-
-The snapshots use check-based change detection. The transaction fact model uses incremental materialization to avoid rebuilding the entire historical dataset on every run.
-
-### 5. Workflow Automation
-
-GitHub Actions workflows are defined for:
-
-- Running linting and dbt compilation checks.
-- Executing dbt models and tests against Snowflake.
-- Managing warehouse credentials through GitHub Secrets.
-
-## Technical Outcomes
-
-- Established a CDC-based architecture connecting PostgreSQL, Debezium and Kafka.
-- Defined a Kafka consumer for batch-based Parquet file generation.
-- Used MinIO as an intermediate storage layer between event processing and Snowflake.
-- Organized analytical transformations into staging, historical snapshots, dimensions and an incremental fact model.
-- Defined Airflow workflows for scheduled ingestion and transformation.
-- Added GitHub Actions workflows for dbt validation and execution.
+This provides a repeatable workflow for managing and executing dbt transformations.
 
 ## Repository Structure
 
 ```text
-.
+Real-Time-End-to-End_Data_Pipeline-Using-Kafka-Airflow-DBT-Snowflake/
+│
 ├── .github/
 │   └── workflows/
+│
 ├── initial_phase/
+│
 ├── banking_dbt/
 │   ├── models/
-│   │   ├── staging/
-│   │   └── marts/
-│   └── snapshots/
+│   ├── snapshots/
+│   └── .dbt/
+│
 ├── consumer/
 │   └── kafka_to_minio.py
+│
 ├── data-generator/
 │   └── faker_generator.py
+│
 ├── docker/
 │   └── dags/
+│
 ├── kafka-debezium/
+│   └── generate_and_post_connector.py
+│
 ├── postgres/
+│   └── schema.sql
+│
 ├── docker-compose.yml
 ├── dockerfile-airflow.dockerfile
 ├── requirements.txt
@@ -153,14 +211,17 @@ GitHub Actions workflows are defined for:
 └── LICENSE
 ```
 
-## Setup and Execution
+## Getting Started
 
 ### Prerequisites
 
-- Docker Desktop and Docker Compose
-- Python 3.11+
-- Snowflake account
-- Required environment variables and credentials
+Make sure the following tools are installed:
+
+- Git
+- Docker Desktop or Docker Engine
+- Docker Compose
+- Python 3.x
+- A Snowflake account with the required database, schema, warehouse, and credentials
 
 ### 1. Clone the Repository
 
@@ -170,88 +231,119 @@ git clone https://github.com/Subhajit-Chowdhury/Real-Time-End-to-End_Data_Pipeli
 cd Real-Time-End-to-End_Data_Pipeline-Using-Kafka-Airflow-DBT-Snowflake
 ```
 
-### 2. Configure Environment Variables
-
-Create the required local `.env` files for PostgreSQL, MinIO, Airflow, Kafka and Snowflake.
-
-Configure the dbt Snowflake profile separately.
-
-Do not commit passwords, access keys or other credentials.
-
-### 3. Start Infrastructure
+### 2. Start the Infrastructure
 
 ```bash
 docker compose up -d --build
 ```
 
-### 4. Install Dependencies
+This starts the core services configured in Docker Compose, including PostgreSQL, Kafka, Kafka Connect, MinIO, and Airflow.
+
+### 3. Set Up the Python Environment
 
 ```bash
 python -m venv .venv
+```
 
-# Windows
+Activate the environment:
+
+**Windows**
+```bash
 .venv\Scripts\activate
+```
 
+**Linux / macOS**
+```bash
+source .venv/bin/activate
+```
+
+Install dependencies:
+
+```bash
 pip install -r requirements.txt
 ```
 
-### 5. Initialize PostgreSQL
+### 4. Initialize the PostgreSQL Schema
 
 ```bash
 docker compose cp ./postgres/schema.sql postgres:/tmp/schema.sql
 
-docker compose exec postgres sh -c \
-'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /tmp/schema.sql'
+docker compose exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /tmp/schema.sql'
 ```
 
-### 6. Register the Debezium Connector
+### 5. Configure the Debezium Connector
+
+After Kafka Connect is available, register the PostgreSQL connector:
 
 ```bash
 python kafka-debezium/generate_and_post_connector.py
 ```
 
-### 7. Generate Synthetic Data
+### 6. Generate Banking Data
+
+Run the data generator:
 
 ```bash
 python data-generator/faker_generator.py --once
 ```
 
-### 8. Start the Kafka Consumer
+### 7. Start the Kafka Consumer
 
 ```bash
 python consumer/kafka_to_minio.py
 ```
 
-Configure Snowflake objects and the dbt profile before enabling the Airflow DAGs.
+The consumer reads the configured Kafka topics and prepares Parquet batches for MinIO storage.
 
-The data generator, connector registration script and Kafka consumer run as separate processes and are not started automatically by Docker Compose.
+### 8. Configure Snowflake and dbt
 
-## Known Limitations
+Configure the Snowflake connection in the dbt profile located at:
 
-The following areas require additional implementation and testing:
+```text
+banking_dbt/.dbt/profiles.yml
+```
 
-- The consumer's expected Debezium event structure does not match the configured schema-less event format.
-- The Parquet output schema does not match the VARIANT-based structure expected by the dbt staging models.
-- The consumer does not flush partially filled batches on a timer.
-- Delete events are not currently handled.
-- MinIO object listing does not paginate results.
-- Snapshot and mart tasks do not have an explicit execution dependency in the daily Airflow workflow.
-- Snowflake raw-table definitions and the complete dbt connection configuration require setup.
+Set the required Snowflake connection details and credentials for your environment.
 
-These items need to be addressed before the complete pipeline can be executed successfully.
+Configure the corresponding Snowflake database, schema, warehouse, and staging objects before running the warehouse workflows.
 
-## Attribution and References
+## Key Learning Outcomes
 
-This project was inspired by **Jaya Chandra Kadiveti (Data with Jay)** and his banking data engineering tutorial.
+This project brings together several important data engineering concepts:
 
-**Original project:** [banking-modern-datastack](https://github.com/Jay61616/banking-modern-datastack)
+- Building CDC-based data ingestion pipelines.
+- Working with PostgreSQL logical replication and Debezium.
+- Understanding Kafka topics and event-driven processing.
+- Processing data with Python.
+- Working with Parquet and S3-compatible object storage.
+- Orchestrating data workflows using Apache Airflow.
+- Loading data into Snowflake using `COPY INTO`.
+- Implementing dbt staging, snapshots, dimensions, and fact models.
+- Applying SCD Type 2 concepts for historical data tracking.
+- Automating dbt workflows with GitHub Actions.
+- Managing data infrastructure using Docker Compose.
 
-**Reference tutorial:** [End-to-End Banking Data Engineering Project | Snowflake + DBT + Airflow](https://youtu.be/uHiyZitmIS0)
+## Acknowledgements
 
-I used the original project and tutorial as a reference and developed my own implementation, configurations and modifications for this repository.
+This project is my own implementation inspired by the banking modern data stack walkthrough created by **Jaya Chandra Kadiveti (Data with Jay)**.
 
-This repository is an independent learning and portfolio implementation. It is not an official version of the original project and is not affiliated with or endorsed by the original creator.
+Original project: [Banking Modern Data Stack](https://github.com/Jay61616/banking-modern-datastack)
 
-## License
+Tutorial: [End-to-End Banking Data Engineering Project](https://youtu.be/uHiyZitmIS0?si=hqAe6HblkAVxzHHv)
 
-This repository includes an MIT License. Any reused third-party code or materials remain subject to their original applicable copyright and license terms.
+Credit to the original creator for the learning reference and project inspiration.
+
+## Author
+
+**Subhajit Chowdhury**
+
+Data Engineer | AWS Certified | Snowflake
+
+- GitHub: [Subhajit-Chowdhury](https://github.com/Subhajit-Chowdhury)
+- LinkedIn: [Connect with me](https://www.linkedin.com/in/subhajit-dataengineer/)
+
+---
+
+If you find this project useful, feel free to explore the repository and share your feedback.
+
+**Thanks for visiting!**
